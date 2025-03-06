@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime
 
 # =============================================================================
-# Configuración: Credenciales y IDs de Notion desde st.secrets
+# Configuración: Credenciales e IDs de Notion (almacenados en st.secrets)
 # =============================================================================
 NOTION_API_KEY = st.secrets["NOTION_API_KEY"]
 DATABASE_PROYECTOS   = st.secrets["DATABASE_PROYECTOS"]
@@ -27,7 +27,7 @@ HEADERS = {
 @st.cache_data
 def get_notion_data(database_id):
     """
-    Realiza la consulta a la API de Notion para la base de datos con el ID proporcionado.
+    Consulta la API de Notion para la base de datos con el ID proporcionado.
     Retorna el JSON con los datos o None en caso de error.
     """
     url = f"https://api.notion.com/v1/databases/{database_id}/query"
@@ -42,8 +42,10 @@ def get_notion_data(database_id):
 def parse_notion_data(data, mapping):
     """
     Convierte la respuesta JSON de Notion en un DataFrame.
-    mapping: Diccionario con formato { "NombreColumna": "tipo" }
+    
+    mapping: Diccionario con el formato { "NombreColumna": "tipo" }.
     Tipos soportados: title, select, multi_select, date, number, relation, rich_text, phone_number, email.
+    Se agregan validaciones para evitar errores si los datos faltan.
     """
     records = []
     for result in data.get("results", []):
@@ -59,11 +61,12 @@ def parse_notion_data(data, mapping):
                 multi = props.get(col, {}).get("multi_select", [])
                 record[col] = ", ".join([item.get("name", "") for item in multi]) if multi else ""
             elif col_type == "date":
+                # Validamos que el valor exista, que sea un diccionario y que value["date"] no sea None.
                 value = props.get(col)
-                if isinstance(value, dict) and "date" in value:
-                 record[col] = value["date"].get("start", "")
+                if isinstance(value, dict) and "date" in value and value["date"]:
+                    record[col] = value["date"].get("start", "")
                 else:
-                 record[col] = ""
+                    record[col] = ""
             elif col_type == "number":
                 record[col] = props.get(col, {}).get("number", 0)
             elif col_type == "relation":
@@ -82,7 +85,7 @@ def parse_notion_data(data, mapping):
     return pd.DataFrame(records)
 
 # =============================================================================
-# Mapeo de columnas para cada base de datos (ajusta los nombres según tu Notion)
+# Mapeo de columnas para cada base de datos (ajusta según cómo estén nombradas en Notion)
 # =============================================================================
 
 mapping_proyectos = {
@@ -158,7 +161,10 @@ df_productos = parse_notion_data(data_productos, mapping_productos) if data_prod
 df_clientes  = parse_notion_data(data_clientes, mapping_clientes) if data_clientes else pd.DataFrame()
 df_personas  = parse_notion_data(data_personas, mapping_personas) if data_personas else pd.DataFrame()
 
-# Convertir columnas de fecha a datetime
+# =============================================================================
+# Función para convertir columnas de fecha a datetime
+# =============================================================================
+
 def convert_dates(df, mapping):
     for col, typ in mapping.items():
         if typ == "date" and col in df.columns:
@@ -187,7 +193,7 @@ section = st.sidebar.radio("Selecciona la sección",
 if section == "Proyectos":
     st.header("Métricas de Proyectos")
     if not df_proyectos.empty:
-        # 1. Cantidad total y distribución por estado
+        # 1. Total de Proyectos y distribución por estado
         total = len(df_proyectos)
         st.metric("Total de Proyectos", total)
         estado_counts = df_proyectos["Estado del Proyecto"].value_counts().reset_index()
@@ -195,8 +201,8 @@ if section == "Proyectos":
         fig_estado = px.pie(estado_counts, values="Cantidad", names="Estado", title="Proporción de Proyectos por Estado")
         st.plotly_chart(fig_estado)
         
-        # 2. Distribución de proyectos por cliente
-        # Suponemos que en "💸 Cliente/Empresa" se guarda una lista de IDs; tomamos el primero si existe.
+        # 2. Distribución de proyectos por Cliente
+        # Suponemos que "💸 Cliente/Empresa" contiene una lista de IDs; tomamos el primero si existe.
         df_proyectos["ClienteID"] = df_proyectos["💸 Cliente/Empresa"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
         cliente_counts = df_proyectos["ClienteID"].value_counts().reset_index()
         cliente_counts.columns = ["ClienteID", "Cantidad"]
@@ -205,16 +211,16 @@ if section == "Proyectos":
         fig_cliente = px.bar(cliente_counts, x="ClienteID", y="Cantidad", title="Proyectos por Cliente")
         st.plotly_chart(fig_cliente)
         
-        # 3. Duración promedio de los proyectos (usando fechas reales)
+        # 3. Duración promedio de Proyectos (usando fechas reales)
         df_duration = df_proyectos.dropna(subset=["Fecha de Inicio Real", "Fecha de Finalización Real"]).copy()
         if not df_duration.empty:
             df_duration["Duracion (días)"] = (df_duration["Fecha de Finalización Real"] - df_duration["Fecha de Inicio Real"]).dt.days
             avg_duration = df_duration["Duracion (días)"].mean()
             st.metric("Duración Promedio (días)", f"{avg_duration:.1f}")
         else:
-            st.warning("No hay datos suficientes de fechas reales.")
+            st.warning("No hay suficientes datos reales para calcular la duración.")
         
-        # 4. Cantidad de proyectos por célula
+        # 4. Proyectos por Célula
         df_proyectos["CelulaID"] = df_proyectos["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
         cell_counts = df_proyectos["CelulaID"].value_counts().reset_index()
         cell_counts.columns = ["CelulaID", "Cantidad"]
@@ -223,7 +229,7 @@ if section == "Proyectos":
         fig_cell = px.bar(cell_counts, x="CelulaID", y="Cantidad", title="Proyectos por Célula")
         st.plotly_chart(fig_cell)
         
-        # 5. % de proyectos retrasados vs. a tiempo (comparando fecha estimada y real de cierre)
+        # 5. Porcentaje de proyectos retrasados vs. a tiempo
         df_time = df_proyectos.dropna(subset=["Fecha de Finalización Estimada", "Fecha de Finalización Real"]).copy()
         if not df_time.empty:
             df_time["Estado Tiempo"] = df_time.apply(
@@ -237,7 +243,7 @@ if section == "Proyectos":
         else:
             st.warning("No hay suficientes datos para evaluar retrasos.")
         
-        # 6. Evolución de proyectos a lo largo del tiempo (por mes de inicio estimado)
+        # 6. Evolución de Proyectos a lo largo del tiempo (por mes de inicio estimado)
         if "Fecha de Inicio Estimada" in df_proyectos.columns:
             df_proyectos["Mes_Inicio"] = df_proyectos["Fecha de Inicio Estimada"].dt.to_period("M").astype(str)
             timeline = df_proyectos["Mes_Inicio"].value_counts().sort_index().reset_index()
@@ -254,7 +260,7 @@ if section == "Proyectos":
 elif section == "Células":
     st.header("Métricas de Células")
     if not df_celulas.empty:
-        # Número de personas por célula (unir con df_personas)
+        # Número de personas por Célula (unir con df_personas)
         if not df_personas.empty:
             df_personas["CelulaID"] = df_personas["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
             personas_por_celula = df_personas.groupby("CelulaID").size().reset_index(name="Cantidad de Personas")
@@ -265,7 +271,7 @@ elif section == "Células":
         else:
             st.warning("No hay datos de Personas para relacionar con las Células.")
         
-        # Cantidad de proyectos asignados a cada célula
+        # Proyectos asignados a cada Célula
         if not df_proyectos.empty:
             cell_projects = df_proyectos["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
             cell_project_counts = cell_projects.value_counts().reset_index()
@@ -275,9 +281,9 @@ elif section == "Células":
             fig_cell_proj = px.bar(cell_project_counts, x="CelulaID", y="Cantidad de Proyectos", title="Proyectos por Célula")
             st.plotly_chart(fig_cell_proj)
         else:
-            st.warning("No hay datos de Proyectos para asignar a las Células.")
+            st.warning("No hay datos de Proyectos.")
         
-        # Tiempo de finalización promedio por célula (usando fechas reales de Proyectos)
+        # Duración promedio de Proyectos por Célula (fechas reales)
         df_time_cell = df_proyectos.dropna(subset=["Fecha de Inicio Real", "Fecha de Finalización Real"]).copy()
         if not df_time_cell.empty:
             df_time_cell["Duracion (días)"] = (df_time_cell["Fecha de Finalización Real"] - df_time_cell["Fecha de Inicio Real"]).dt.days
@@ -288,7 +294,7 @@ elif section == "Células":
             fig_duration = px.bar(duration_by_cell, x="CelulaID", y="Duracion (días)", title="Duración Promedio por Célula")
             st.plotly_chart(fig_duration)
         else:
-            st.warning("No hay suficientes datos de fechas reales para evaluar duración por Célula.")
+            st.warning("No hay suficientes datos reales para evaluar la duración por Célula.")
     else:
         st.warning("No se encontraron datos de Células.")
 
@@ -310,7 +316,7 @@ elif section == "Productos/Servicios":
         
         # Ingresos totales generados por cada producto
         product_rev = df_productos.copy()
-        # Contamos en cuántos proyectos aparece cada producto (buscando por ID en la relación)
+        # Se cuenta en cuántos proyectos aparece cada producto (buscando el ID)
         product_rev["Cantidad de Proyectos"] = product_rev["Nombre"].apply(
             lambda prod: df_proyectos["📝 Producto/Servicio"].apply(
                 lambda rel: prod in rel if isinstance(rel, list) else False
@@ -338,13 +344,11 @@ elif section == "Clientes/Empresas":
         fig_client_estado = px.pie(estado_clientes, values="Cantidad", names="Estado", title="Clientes Activos vs. Inactivos")
         st.plotly_chart(fig_client_estado)
         
-        # Proyectos por Cliente
         df_clientes["Cantidad de Proyectos"] = df_clientes["💼 Proyecto"].apply(lambda x: len(x) if isinstance(x, list) else 0)
         st.subheader("Proyectos por Cliente")
         fig_client_proj = px.bar(df_clientes, x="Nombre", y="Cantidad de Proyectos", title="Proyectos por Cliente")
         st.plotly_chart(fig_client_proj)
         
-        # Distribución del tamaño de las empresas
         tamaño_counts = df_clientes["Tamaño"].value_counts().reset_index()
         tamaño_counts.columns = ["Tamaño", "Cantidad"]
         st.subheader("Distribución de Tamaño de Empresas")
@@ -363,7 +367,6 @@ elif section == "Personas":
         total_personas = len(df_personas)
         st.metric("Total de Personas", total_personas)
         
-        # Personas por Célula
         df_personas["CelulaID"] = df_personas["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
         personas_por_celula = df_personas.groupby("CelulaID").size().reset_index(name="Cantidad")
         st.subheader("Personas por Célula")
@@ -371,7 +374,6 @@ elif section == "Personas":
         fig_personas_cel = px.bar(personas_por_celula, x="CelulaID", y="Cantidad", title="Distribución de Personas por Célula")
         st.plotly_chart(fig_personas_cel)
         
-        # Distribución de Roles/Cargos
         if "Cargo" in df_personas.columns:
             cargos = df_personas["Cargo"].replace("", "Sin Cargo")
             cargo_counts = cargos.value_counts().reset_index()
@@ -380,7 +382,6 @@ elif section == "Personas":
             st.write(cargo_counts)
             fig_cargos = px.bar(cargo_counts, x="Cargo", y="Cantidad", title="Roles/Cargos en el Sistema")
             st.plotly_chart(fig_cargos)
-            # Nube de palabras para roles, si se tiene la librería wordcloud
             try:
                 from wordcloud import WordCloud
                 import matplotlib.pyplot as plt
@@ -395,9 +396,6 @@ elif section == "Personas":
                 st.info("Instalá la librería wordcloud para visualizar la nube de palabras.")
         else:
             st.warning("No se encontró información de Roles/Cargos.")
-        
-        # (Opcional) Personas con más proyectos asignados:
-        # Si la relación de Personas en Proyectos estuviera definida, se podría contar.
     else:
         st.warning("No se encontraron datos de Personas.")
 
