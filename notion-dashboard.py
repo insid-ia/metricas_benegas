@@ -20,14 +20,31 @@ HEADERS = {
 }
 
 # Función para obtener datos de Notion
+#def get_notion_data(database_id):
+#    url = f"https://api.notion.com/v1/databases/{database_id}/query"
+#    response = requests.post(url, headers=HEADERS)
+#    if response.status_code == 200:
+#        return response.json()
+#    else:
+#        st.error(f"Error al obtener datos de Notion ({response.status_code})")
+#        return None 
+
+
 def get_notion_data(database_id):
     url = f"https://api.notion.com/v1/databases/{database_id}/query"
     response = requests.post(url, headers=HEADERS)
+    
+    # Mostramos el código de estado y la respuesta para depurar errores
+    st.write(f"Obteniendo datos de {database_id} -> Código de respuesta: {response.status_code}")
+    st.write(response.json())  # Esto nos dirá el error exacto
+
     if response.status_code == 200:
         return response.json()
     else:
         st.error(f"Error al obtener datos de Notion ({response.status_code})")
         return None
+
+
 
 # Función para procesar los datos y convertirlos en DataFrame
 def parse_notion_data(data, columns):
