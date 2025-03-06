@@ -61,9 +61,9 @@ def parse_notion_data(data, mapping):
             elif col_type == "date":
                 value = props.get(col)
                 if isinstance(value, dict) and "date" in value:
-                record[col] = value["date"].get("start", "")
+                 record[col] = value["date"].get("start", "")
                 else:
-                record[col] = ""
+                 record[col] = ""
             elif col_type == "number":
                 record[col] = props.get(col, {}).get("number", 0)
             elif col_type == "relation":
