@@ -59,7 +59,11 @@ def parse_notion_data(data, mapping):
                 multi = props.get(col, {}).get("multi_select", [])
                 record[col] = ", ".join([item.get("name", "") for item in multi]) if multi else ""
             elif col_type == "date":
-                record[col] = props.get(col, {}).get("date", {}).get("start", "")
+                value = props.get(col)
+                if isinstance(value, dict) and "date" in value:
+                record[col] = value["date"].get("start", "")
+                else:
+                record[col] = ""
             elif col_type == "number":
                 record[col] = props.get(col, {}).get("number", 0)
             elif col_type == "relation":
