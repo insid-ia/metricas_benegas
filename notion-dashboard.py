@@ -45,12 +45,17 @@ def parse_notion_data(data, mapping):
     
     mapping: Diccionario con el formato { "NombreColumna": "tipo" }.
     Tipos soportados: title, select, multi_select, date, number, relation, rich_text, phone_number, email.
-    Se agregan validaciones para evitar errores si los datos faltan.
+    
+    Se agrega 'NotionID' para poder mapear la relación con el nombre real.
     """
     records = []
     for result in data.get("results", []):
+        # Guardar el ID de la página de Notion
+        page_id = result.get("id", "")
+        
         props = result.get("properties", {})
-        record = {}
+        record = {"NotionID": page_id}  # Almacena el ID de la página
+
         for col, col_type in mapping.items():
             if col_type == "title":
                 titles = props.get(col, {}).get("title", [])
@@ -61,7 +66,6 @@ def parse_notion_data(data, mapping):
                 multi = props.get(col, {}).get("multi_select", [])
                 record[col] = ", ".join([item.get("name", "") for item in multi]) if multi else ""
             elif col_type == "date":
-                # Validamos que el valor exista, que sea un diccionario y que value["date"] no sea None.
                 value = props.get(col)
                 if isinstance(value, dict) and "date" in value and value["date"]:
                     record[col] = value["date"].get("start", "")
@@ -85,7 +89,7 @@ def parse_notion_data(data, mapping):
     return pd.DataFrame(records)
 
 # =============================================================================
-# Mapeo de columnas para cada base de datos (ajusta según cómo estén nombradas en Notion)
+# Mapeo de columnas para cada base de datos (ajusta según tus nombres en Notion)
 # =============================================================================
 
 mapping_proyectos = {
@@ -178,6 +182,19 @@ df_clientes  = convert_dates(df_clientes, mapping_clientes)
 df_personas  = convert_dates(df_personas, mapping_personas)
 
 # =============================================================================
+# Creación de diccionarios para mapear ID -> Nombre
+# =============================================================================
+
+# Cada DataFrame tiene una columna "NotionID" y una columna "Nombre".
+# Creamos un diccionario para reemplazar IDs por Nombres.
+# Ejemplo: client_dict[<ID_de_Cliente>] = <Nombre_del_Cliente>
+
+client_dict = dict(zip(df_clientes["NotionID"], df_clientes["Nombre"]))
+celula_dict = dict(zip(df_celulas["NotionID"], df_celulas["Nombre"]))
+producto_dict = dict(zip(df_productos["NotionID"], df_productos["Nombre"]))
+persona_dict = dict(zip(df_personas["NotionID"], df_personas["Nombre"]))
+
+# =============================================================================
 # Dashboard en Streamlit: Menú lateral para secciones
 # =============================================================================
 
@@ -193,25 +210,30 @@ section = st.sidebar.radio("Selecciona la sección",
 if section == "Proyectos":
     st.header("Métricas de Proyectos")
     if not df_proyectos.empty:
-        # 1. Total de Proyectos y distribución por estado
+        # 1. Cantidad total y distribución por estado
         total = len(df_proyectos)
         st.metric("Total de Proyectos", total)
+        
         estado_counts = df_proyectos["Estado del Proyecto"].value_counts().reset_index()
         estado_counts.columns = ["Estado", "Cantidad"]
         fig_estado = px.pie(estado_counts, values="Cantidad", names="Estado", title="Proporción de Proyectos por Estado")
         st.plotly_chart(fig_estado)
         
-        # 2. Distribución de proyectos por Cliente
-        # Suponemos que "💸 Cliente/Empresa" contiene una lista de IDs; tomamos el primero si existe.
+        # 2. Mostrar el nombre del Cliente en lugar de su ID
+        # Creamos una nueva columna "ClienteID" y luego "ClienteName"
         df_proyectos["ClienteID"] = df_proyectos["💸 Cliente/Empresa"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-        cliente_counts = df_proyectos["ClienteID"].value_counts().reset_index()
-        cliente_counts.columns = ["ClienteID", "Cantidad"]
-        st.subheader("Proyectos por Cliente (ID)")
+        df_proyectos["ClienteName"] = df_proyectos["ClienteID"].map(client_dict).fillna("Sin Cliente")
+        
+        # Gráfico: Proyectos por Cliente (Nombre)
+        cliente_counts = df_proyectos["ClienteName"].value_counts().reset_index()
+        cliente_counts.columns = ["Cliente", "Cantidad"]
+        
+        st.subheader("Proyectos por Cliente")
         st.write(cliente_counts)
-        fig_cliente = px.bar(cliente_counts, x="ClienteID", y="Cantidad", title="Proyectos por Cliente")
+        fig_cliente = px.bar(cliente_counts, x="Cliente", y="Cantidad", title="Proyectos por Cliente (Nombre)")
         st.plotly_chart(fig_cliente)
         
-        # 3. Duración promedio de Proyectos (usando fechas reales)
+        # 3. Duración promedio de Proyectos (fechas reales)
         df_duration = df_proyectos.dropna(subset=["Fecha de Inicio Real", "Fecha de Finalización Real"]).copy()
         if not df_duration.empty:
             df_duration["Duracion (días)"] = (df_duration["Fecha de Finalización Real"] - df_duration["Fecha de Inicio Real"]).dt.days
@@ -220,13 +242,15 @@ if section == "Proyectos":
         else:
             st.warning("No hay suficientes datos reales para calcular la duración.")
         
-        # 4. Proyectos por Célula
+        # 4. Proyectos por Célula (Nombre)
         df_proyectos["CelulaID"] = df_proyectos["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-        cell_counts = df_proyectos["CelulaID"].value_counts().reset_index()
-        cell_counts.columns = ["CelulaID", "Cantidad"]
-        st.subheader("Proyectos por Célula (ID)")
+        df_proyectos["CelulaName"] = df_proyectos["CelulaID"].map(celula_dict).fillna("Sin Célula")
+        
+        cell_counts = df_proyectos["CelulaName"].value_counts().reset_index()
+        cell_counts.columns = ["Célula", "Cantidad"]
+        st.subheader("Proyectos por Célula")
         st.write(cell_counts)
-        fig_cell = px.bar(cell_counts, x="CelulaID", y="Cantidad", title="Proyectos por Célula")
+        fig_cell = px.bar(cell_counts, x="Célula", y="Cantidad", title="Proyectos por Célula (Nombre)")
         st.plotly_chart(fig_cell)
         
         # 5. Porcentaje de proyectos retrasados vs. a tiempo
@@ -260,38 +284,51 @@ if section == "Proyectos":
 elif section == "Células":
     st.header("Métricas de Células")
     if not df_celulas.empty:
-        # Número de personas por Célula (unir con df_personas)
+        # Mostramos el DataFrame de Células si querés depurar
+        # st.write(df_celulas)
+        
+        # 1. Número de personas por Célula
         if not df_personas.empty:
+            # Mapear ID de Persona -> Nombre (opcional, si querés mostrar nombres de personas en algún gráfico)
+            # persona_dict = dict(zip(df_personas["NotionID"], df_personas["Nombre"]))
+            
+            # Cada persona tiene una "Célula" (lista de IDs). Tomamos la primera si existe
             df_personas["CelulaID"] = df_personas["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-            personas_por_celula = df_personas.groupby("CelulaID").size().reset_index(name="Cantidad de Personas")
-            st.subheader("Número de Personas por Célula")
+            df_personas["CelulaName"] = df_personas["CelulaID"].map(celula_dict).fillna("Sin Célula")
+            
+            personas_por_celula = df_personas.groupby("CelulaName").size().reset_index(name="Cantidad de Personas")
+            st.subheader("Número de Personas por Célula (Nombre)")
             st.write(personas_por_celula)
-            fig_personas = px.bar(personas_por_celula, x="CelulaID", y="Cantidad de Personas", title="Personas por Célula")
+            fig_personas = px.bar(personas_por_celula, x="CelulaName", y="Cantidad de Personas", title="Personas por Célula (Nombre)")
             st.plotly_chart(fig_personas)
         else:
             st.warning("No hay datos de Personas para relacionar con las Células.")
         
-        # Proyectos asignados a cada Célula
+        # 2. Proyectos asignados a cada Célula (por nombre)
         if not df_proyectos.empty:
-            cell_projects = df_proyectos["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-            cell_project_counts = cell_projects.value_counts().reset_index()
-            cell_project_counts.columns = ["CelulaID", "Cantidad de Proyectos"]
-            st.subheader("Proyectos por Célula")
+            df_proyectos["CelulaID"] = df_proyectos["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
+            df_proyectos["CelulaName"] = df_proyectos["CelulaID"].map(celula_dict).fillna("Sin Célula")
+            
+            cell_project_counts = df_proyectos["CelulaName"].value_counts().reset_index()
+            cell_project_counts.columns = ["Célula", "Cantidad de Proyectos"]
+            st.subheader("Proyectos por Célula (Nombre)")
             st.write(cell_project_counts)
-            fig_cell_proj = px.bar(cell_project_counts, x="CelulaID", y="Cantidad de Proyectos", title="Proyectos por Célula")
+            fig_cell_proj = px.bar(cell_project_counts, x="Célula", y="Cantidad de Proyectos", title="Proyectos por Célula")
             st.plotly_chart(fig_cell_proj)
         else:
             st.warning("No hay datos de Proyectos.")
         
-        # Duración promedio de Proyectos por Célula (fechas reales)
+        # 3. Duración promedio de Proyectos por Célula
         df_time_cell = df_proyectos.dropna(subset=["Fecha de Inicio Real", "Fecha de Finalización Real"]).copy()
         if not df_time_cell.empty:
             df_time_cell["Duracion (días)"] = (df_time_cell["Fecha de Finalización Real"] - df_time_cell["Fecha de Inicio Real"]).dt.days
             df_time_cell["CelulaID"] = df_time_cell["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-            duration_by_cell = df_time_cell.groupby("CelulaID")["Duracion (días)"].mean().reset_index()
+            df_time_cell["CelulaName"] = df_time_cell["CelulaID"].map(celula_dict).fillna("Sin Célula")
+            
+            duration_by_cell = df_time_cell.groupby("CelulaName")["Duracion (días)"].mean().reset_index()
             st.subheader("Duración Promedio de Proyectos por Célula")
             st.write(duration_by_cell)
-            fig_duration = px.bar(duration_by_cell, x="CelulaID", y="Duracion (días)", title="Duración Promedio por Célula")
+            fig_duration = px.bar(duration_by_cell, x="CelulaName", y="Duracion (días)", title="Duración Promedio por Célula")
             st.plotly_chart(fig_duration)
         else:
             st.warning("No hay suficientes datos reales para evaluar la duración por Célula.")
@@ -305,24 +342,27 @@ elif section == "Células":
 elif section == "Productos/Servicios":
     st.header("Métricas de Productos y Servicios")
     if not df_productos.empty and not df_proyectos.empty:
-        # Productos más utilizados en Proyectos
+        # Mapear ID de producto a su nombre
         df_proyectos["ProductoID"] = df_proyectos["📝 Producto/Servicio"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-        product_usage = df_proyectos["ProductoID"].value_counts().reset_index()
-        product_usage.columns = ["ProductoID", "Cantidad de Usos"]
-        st.subheader("Uso de Productos/Servicios")
+        df_proyectos["ProductoName"] = df_proyectos["ProductoID"].map(producto_dict).fillna("Sin Producto")
+        
+        # Productos más utilizados
+        product_usage = df_proyectos["ProductoName"].value_counts().reset_index()
+        product_usage.columns = ["Producto", "Cantidad de Usos"]
+        st.subheader("Uso de Productos/Servicios (Nombre)")
         st.write(product_usage)
-        fig_prod_usage = px.bar(product_usage, x="ProductoID", y="Cantidad de Usos", title="Productos/Servicios más utilizados")
+        fig_prod_usage = px.bar(product_usage, x="Producto", y="Cantidad de Usos", title="Productos/Servicios más utilizados")
         st.plotly_chart(fig_prod_usage)
         
         # Ingresos totales generados por cada producto
         product_rev = df_productos.copy()
-        # Se cuenta en cuántos proyectos aparece cada producto (buscando el ID)
+        # Mapeamos el NotionID -> Nombre, para poder hacer un join si quisiéramos
+        # Sin embargo, aquí usaremos la misma lógica: contar en cuántos proyectos aparece el Nombre
         product_rev["Cantidad de Proyectos"] = product_rev["Nombre"].apply(
-            lambda prod: df_proyectos["📝 Producto/Servicio"].apply(
-                lambda rel: prod in rel if isinstance(rel, list) else False
-            ).sum()
+            lambda prod: df_proyectos["ProductoName"].eq(prod).sum()
         )
         product_rev["Ingresos Totales"] = product_rev["Precio"] * product_rev["Cantidad de Proyectos"]
+        
         st.subheader("Ingresos Totales por Producto/Servicio")
         st.write(product_rev[["Nombre", "Precio", "Cantidad de Proyectos", "Ingresos Totales"]])
         fig_prod_rev = px.bar(product_rev, x="Nombre", y="Ingresos Totales", title="Ingresos Totales por Producto/Servicio")
@@ -339,16 +379,21 @@ elif section == "Clientes/Empresas":
     if not df_clientes.empty:
         total_clientes = len(df_clientes)
         st.metric("Total de Clientes", total_clientes)
+        
+        # Activos vs Inactivos
         estado_clientes = df_clientes["Estado de Cliente"].value_counts().reset_index()
         estado_clientes.columns = ["Estado", "Cantidad"]
         fig_client_estado = px.pie(estado_clientes, values="Cantidad", names="Estado", title="Clientes Activos vs. Inactivos")
         st.plotly_chart(fig_client_estado)
         
+        # Proyectos por Cliente
+        # Cada cliente en df_clientes tiene NotionID y un array "💼 Proyecto"
         df_clientes["Cantidad de Proyectos"] = df_clientes["💼 Proyecto"].apply(lambda x: len(x) if isinstance(x, list) else 0)
         st.subheader("Proyectos por Cliente")
-        fig_client_proj = px.bar(df_clientes, x="Nombre", y="Cantidad de Proyectos", title="Proyectos por Cliente")
+        fig_client_proj = px.bar(df_clientes, x="Nombre", y="Cantidad de Proyectos", title="Proyectos por Cliente (Nombre)")
         st.plotly_chart(fig_client_proj)
         
+        # Distribución de Tamaño de Empresas
         tamaño_counts = df_clientes["Tamaño"].value_counts().reset_index()
         tamaño_counts.columns = ["Tamaño", "Cantidad"]
         st.subheader("Distribución de Tamaño de Empresas")
@@ -367,13 +412,17 @@ elif section == "Personas":
         total_personas = len(df_personas)
         st.metric("Total de Personas", total_personas)
         
+        # Personas por Célula (nombre)
         df_personas["CelulaID"] = df_personas["👥 Célula"].apply(lambda x: x[0] if isinstance(x, list) and x else None)
-        personas_por_celula = df_personas.groupby("CelulaID").size().reset_index(name="Cantidad")
-        st.subheader("Personas por Célula")
+        df_personas["CelulaName"] = df_personas["CelulaID"].map(celula_dict).fillna("Sin Célula")
+        
+        personas_por_celula = df_personas.groupby("CelulaName").size().reset_index(name="Cantidad")
+        st.subheader("Personas por Célula (Nombre)")
         st.write(personas_por_celula)
-        fig_personas_cel = px.bar(personas_por_celula, x="CelulaID", y="Cantidad", title="Distribución de Personas por Célula")
+        fig_personas_cel = px.bar(personas_por_celula, x="CelulaName", y="Cantidad", title="Distribución de Personas por Célula")
         st.plotly_chart(fig_personas_cel)
         
+        # Distribución de Roles/Cargos
         if "Cargo" in df_personas.columns:
             cargos = df_personas["Cargo"].replace("", "Sin Cargo")
             cargo_counts = cargos.value_counts().reset_index()
